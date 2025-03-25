@@ -10,14 +10,25 @@ fn main() {
         Some(pid) => {
             println!("Found process {} with PID: {}", process_name, pid);
 
-            list_modules(pid);
+            let action = get_user_input("Do you want to specify base address by a hex value? (Y/N): ");
 
-            let module_name = get_user_input("Enter one of the module names, listed above: ");
-
-            if let Some((base_addr, module_size)) = get_module_address(pid, &module_name) {
-                scan_memory(pid, base_addr, module_size, &signature);
+            if action.eq_ignore_ascii_case("N") {
+                list_modules(pid);
+                let module_name = get_user_input("Enter one of the module names, listed above: ");
+                if let Some((base_addr, module_size)) = get_module_address(pid, &module_name) {
+                    scan_memory(pid, base_addr, module_size, &signature);
+                } else {
+                    println!("Failed to get module {} for the process.", module_name);
+                }
+            } else if action.eq_ignore_ascii_case("Y") {
+                let base_addr_str = get_user_input("Enter the base address (hex): ");
+                if let Ok(base_addr) = usize::from_str_radix(&base_addr_str, 16) {
+                    scan_memory_unknown_size(pid, base_addr, &signature);
+                } else {
+                    println!("Invalid hex input for base address.");
+                }
             } else {
-                println!("Failed to get module {} for the process.", module_name);
+                println!("Invalid action specified.");
             }
         }
         None => println!("Process {} not found!", process_name),
@@ -119,6 +130,7 @@ fn scan_memory(pid: u32, base_addr: usize, module_size: usize, signature: &[u8])
             for i in 0..bytes_read {
                 if matches_pattern(&buffer[i..], signature) {
                     println!("Match found at: 0x{:X}", base_addr + i);
+                    return;
                 }
                 else {
                     println!("No matching address found.");
@@ -127,6 +139,39 @@ fn scan_memory(pid: u32, base_addr: usize, module_size: usize, signature: &[u8])
             }
         } else {
             println!("Failed to read memory at: 0x{:X}", base_addr);
+        }
+    }
+}
+
+fn scan_memory_unknown_size(pid: u32, base_addr: usize, signature: &[u8]) {
+    const CHUNK_SIZE: usize = 4096; // 4KB chunks
+    let mut current_addr = base_addr;
+
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+        if process.is_err() {
+            println!("Failed to open process: {}", pid);
+            return;
+        }
+        let process_handle = process.unwrap();
+
+        loop {
+            let mut buffer = vec![0u8; CHUNK_SIZE];
+            let mut bytes_read = 0;
+
+            if ReadProcessMemory(process_handle, current_addr as _, buffer.as_mut_ptr() as _, buffer.len(), Some(&mut bytes_read)).is_err() {
+                println!("Reached an invalid memory region or failed to read memory at: 0x{:X}", current_addr);
+                break;
+            }
+
+            for i in 0..bytes_read {
+                if matches_pattern(&buffer[i..], signature) {
+                    println!("Match found at: 0x{:X}", current_addr + i);
+                    return;
+                }
+            }
+
+            current_addr += CHUNK_SIZE;
         }
     }
 }
