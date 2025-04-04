@@ -4,7 +4,7 @@ use windows::Win32::System::{Diagnostics::ToolHelp::*, Threading::*, Diagnostics
 // 0xFF = Wildcard
 fn main() {
     let process_name = "game.exe";
-    let signature: Vec<u8> = vec![0x62, 0x8d, 0xFF, 0xFF, 0xFF, 0xFF, 0x74]; // example signature
+    let signature: Vec<u8> = vec![0x20, 0x3b, 0x1f, 0x44]; // example signature
 
     match find_process_by_name(process_name) {
         Some(pid) => {
@@ -49,7 +49,7 @@ fn find_process_by_name(target_name: &str) -> Option<u32> {
                 if exe_name.contains(target_name) {
                     return Some(proc_entry.th32ProcessID);
                 }
-                if !Process32Next(snapshot, &mut proc_entry).is_ok() {
+                if Process32Next(snapshot, &mut proc_entry).is_err() {
                     break;
                 }
             }
@@ -70,7 +70,7 @@ fn get_module_address(pid: u32, module_name: &str) -> Option<(usize, usize)> {
                 if mod_name.eq_ignore_ascii_case(module_name.trim()) {
                     return Some((mod_entry.modBaseAddr as usize, mod_entry.modBaseSize as usize));
                 }
-                if !Module32Next(snapshot, &mut mod_entry).is_ok() {
+                if Module32Next(snapshot, &mut mod_entry).is_err() {
                     break;
                 }
             }
@@ -82,7 +82,7 @@ fn get_module_address(pid: u32, module_name: &str) -> Option<(usize, usize)> {
 
 fn list_modules(pid: u32) {
     unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid).ok().expect("Failed to create snapshot");
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid).expect("Failed to create snapshot");
         let mut mod_entry: MODULEENTRY32 = mem::zeroed();
         mod_entry.dwSize = mem::size_of::<MODULEENTRY32>() as u32;
 
@@ -91,7 +91,7 @@ fn list_modules(pid: u32) {
             loop {
                 let mod_name = extract_module_name(&mod_entry.szModule);
                 println!(" - {}", mod_name);
-                if !Module32Next(snapshot, &mut mod_entry).is_ok() {
+                if Module32Next(snapshot, &mut mod_entry).is_err() {
                     break;
                 }
             }
@@ -127,14 +127,12 @@ fn scan_memory(pid: u32, base_addr: usize, module_size: usize, signature: &[u8])
 
         if ReadProcessMemory(process_handle, base_addr as _, buffer.as_mut_ptr() as _, buffer.len(), Some(&mut bytes_read)).is_ok() {
             println!("Scanning module memory region starting at: 0x{:X}", base_addr);
-            for i in 0..bytes_read {
+            if let Some(i) = (0..bytes_read).next() {
                 if matches_pattern(&buffer[i..], signature) {
                     println!("Match found at: 0x{:X}", base_addr + i);
-                    return;
                 }
                 else {
                     println!("No matching address found.");
-                    break;
                 }
             }
         } else {
